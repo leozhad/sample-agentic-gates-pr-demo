@@ -1,0 +1,57 @@
+# Agentic review gate — PR surface (SPEC §3.6).
+# Copy into the guarded repo as .github/workflows/agentic-review.yml.
+#
+# Anti-tamper: the gate tooling (pr-reviewer/) and rules (.reviewer.yaml) are
+# executed from the PR's BASE ref via a second checkout — a PR cannot rewrite
+# the reviewer or rules that review it. Same property as the deploy-surface
+# tiers, expressed in Actions.
+#
+# Auth: GitHub OIDC -> aws-actions/configure-aws-credentials -> an IAM role
+# scoped to this repo with bedrock:InvokeModel on us.anthropic profiles only.
+# No static keys anywhere. Set the role ARN once:
+#   gh variable set REVIEWER_ROLE_ARN --body arn:aws:iam::<acct>:role/agentic-gates-pr-reviewer
+name: Agentic review gate
+on:
+  pull_request:
+
+permissions:
+  id-token: write        # OIDC token for the AWS role
+  contents: read
+  pull-requests: write   # post the review
+
+concurrency:
+  group: agentic-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out PR (full history for merge-base diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out gate tooling + rules from the BASE ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-tooling
+
+      - name: Assume reviewer role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.REVIEWER_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Install runtime deps
+        run: pip install --quiet boto3 pyyaml
+
+      - name: Two-stage agentic review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python base-tooling/pr-reviewer/review_pr.py
