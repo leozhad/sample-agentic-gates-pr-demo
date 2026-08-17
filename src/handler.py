@@ -10,6 +10,7 @@ def lambda_handler(event, context):
         "statusCode": 200,
         "body": json.dumps({
             "message": "hello from the paved road",
+            "version": "v2",
             "smoke": bool(event.get("smoke")),
         }),
     }
