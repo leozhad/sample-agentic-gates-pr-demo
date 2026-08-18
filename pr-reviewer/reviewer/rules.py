@@ -14,6 +14,43 @@ import yaml
 VALID_SEVERITIES = {"low", "medium", "high"}
 VALID_FAIL_MODES = {"open", "closed"}
 
+# Extended-thinking presets -> token budgets (Bedrock Converse `reasoningConfig`
+# via additionalModelRequestFields). Names mirror common CLI levels.
+THINKING_LEVELS = {
+    "off": (None, 0),
+    "low": ("low", 2048),
+    "medium": ("medium", 8192),
+    "high": ("high", 16384),
+    "extra-high": ("xhigh", 32768),
+    "max": ("max", 65536),
+}
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    """Reviewer agent identity + model settings (from .reviewer.yaml `agent:`).
+
+    Config-as-code: this block travels in the guarded repo and is read from
+    the BASE ref like the rules — a PR cannot swap its reviewer to a weaker
+    model or strip its persona.
+    """
+
+    name: str = "Agentic Review Gate"
+    persona: str = ""                  # one-line role statement shown in reviews
+    model: str = ""                    # empty -> harness default
+    thinking: str = "off"              # off|low|medium|high|extra-high
+    emoji: str = "🤖"
+
+    @property
+    def thinking_effort(self):
+        """Adaptive-scheme effort value, or None when thinking is off."""
+        return THINKING_LEVELS[self.thinking][0]
+
+    @property
+    def thinking_budget(self) -> int:
+        """Legacy budget_tokens for enabled-type thinking."""
+        return THINKING_LEVELS[self.thinking][1]
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -37,6 +74,7 @@ class RuleSet:
     fail_mode: str = "open"
     max_findings: int = 25
     rules: tuple[Rule, ...] = field(default_factory=tuple)
+    agent: AgentConfig = field(default_factory=AgentConfig)
 
     def by_id(self, rule_id: str) -> Rule | None:
         return next((r for r in self.rules if r.id == rule_id), None)
@@ -93,10 +131,26 @@ def load_rules(text: str) -> RuleSet:
     if not rules:
         raise RulesError("rules file declares no rules")
 
+    raw_agent = doc.get("agent") or {}
+    if not isinstance(raw_agent, dict):
+        raise RulesError("agent must be a mapping")
+    thinking = str(raw_agent.get("thinking", "off"))
+    if thinking not in THINKING_LEVELS:
+        raise RulesError(
+            f"agent.thinking must be one of {sorted(THINKING_LEVELS)}")
+    agent = AgentConfig(
+        name=str(raw_agent.get("name", "Agentic Review Gate"))[:80],
+        persona=str(raw_agent.get("persona", ""))[:300],
+        model=str(raw_agent.get("model", "")),
+        thinking=thinking,
+        emoji=str(raw_agent.get("emoji", "🤖"))[:8],
+    )
+
     return RuleSet(
         version=1,
         confidence_threshold=threshold,
         fail_mode=fail_mode,
         max_findings=max_findings,
         rules=tuple(rules),
+        agent=agent,
     )

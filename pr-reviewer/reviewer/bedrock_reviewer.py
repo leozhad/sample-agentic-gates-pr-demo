@@ -58,14 +58,37 @@ def _rules_block(ruleset: RuleSet) -> str:
     return "\n".join(f"- {r.id}: {r.description} [{r.severity}]" for r in ruleset.rules)
 
 
-def _converse(client, model_id: str, system: str, user: str) -> str:
-    resp = client.converse(
-        modelId=model_id,
-        system=[{"text": system}],
-        messages=[{"role": "user", "content": [{"text": user}]}],
-        inferenceConfig={"maxTokens": 4000, "temperature": 0.0},
-    )
-    return resp["output"]["message"]["content"][0]["text"]
+def _converse(client, model_id: str, system: str, user: str,
+              effort: str | None = None, thinking_budget: int = 0) -> str:
+    kwargs = {
+        "modelId": model_id,
+        "system": [{"text": system}],
+        "messages": [{"role": "user", "content": [{"text": user}]}],
+        "inferenceConfig": {"maxTokens": 4000, "temperature": 0.0},
+    }
+    if effort:
+        # Adaptive extended thinking (Opus 5+): effort levels, temperature unset.
+        kwargs["inferenceConfig"] = {"maxTokens": 12000}
+        kwargs["additionalModelRequestFields"] = {
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": effort}}
+    try:
+        resp = client.converse(**kwargs)
+    except client.exceptions.ValidationException:
+        if not effort:
+            raise
+        # Older Claude models: enabled-type thinking with a token budget.
+        kwargs["inferenceConfig"] = {"maxTokens": thinking_budget + 4000}
+        kwargs["additionalModelRequestFields"] = {
+            "thinking": {"type": "enabled",
+                         "budget_tokens": thinking_budget}}
+        resp = client.converse(**kwargs)
+    # With thinking enabled the content list holds reasoning blocks first;
+    # return the final text block.
+    for block in reversed(resp["output"]["message"]["content"]):
+        if "text" in block:
+            return block["text"]
+    raise KeyError("no text block in model response")
 
 
 def review_diff(
@@ -76,7 +99,16 @@ def review_diff(
     client=None,
 ) -> ReviewOutcome:
     """Run the two-stage review. Never raises on model/infra failure —
-    returns the rules-file-configured fail-open/fail-closed GateResult instead."""
+    returns the rules-file-configured fail-open/fail-closed GateResult instead.
+
+    Precedence for the model: explicit rules-file `agent.model` wins over the
+    caller's model_id (config-as-code from the base ref beats environment)."""
+    agent = ruleset.agent
+    model_id = agent.model or model_id
+    budget = agent.thinking_budget
+    effort = agent.thinking_effort
+    persona_line = (f"You are {agent.name}. {agent.persona}\n\n"
+                    if agent.persona else "")
     client = client or boto3.client("bedrock-runtime", region_name=region)
     tag = secrets.token_hex(8)
     wrapped = f"<untrusted-diff-{tag}>\n{diff}\n</untrusted-diff-{tag}>"
@@ -85,8 +117,9 @@ def review_diff(
         # Stage 1 — discovery
         raw = _converse(
             client, model_id,
-            DISCOVERY_SYSTEM.format(tag=tag, rules_block=_rules_block(ruleset)),
-            wrapped,
+            persona_line + DISCOVERY_SYSTEM.format(
+                tag=tag, rules_block=_rules_block(ruleset)),
+            wrapped, effort=effort, thinking_budget=budget,
         )
         candidates: list[Finding] = parse_model_findings(raw, ruleset)
         if not candidates:
@@ -99,8 +132,9 @@ def review_diff(
         )
         raw2 = _converse(
             client, model_id,
-            VALIDATION_SYSTEM.format(tag=tag),
+            persona_line + VALIDATION_SYSTEM.format(tag=tag),
             f"CANDIDATES:\n{cand_json}\n\nDIFF:\n{wrapped}",
+            effort=effort, thinking_budget=budget,
         )
         scores = _parse_scores(raw2, len(candidates))
         scored = [

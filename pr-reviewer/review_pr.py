@@ -58,9 +58,9 @@ def _gh(method: str, path: str, payload: dict | None = None) -> tuple[int, dict]
         return exc.code, json.loads(exc.read() or b"{}")
 
 
-def _finding_comment(f: dict) -> dict:
-    body = (f"**{f['rule_id']}** ({f['severity']}, "
-            f"{'blocking' if f['blocking'] else 'advisory'}, "
+def _finding_comment(f: dict, agent) -> dict:
+    body = (f"{agent.emoji} **{agent.name}** · **{f['rule_id']}** "
+            f"({f['severity']}, {'blocking' if f['blocking'] else 'advisory'}, "
             f"confidence {f['confidence']})\n\n{f['message']}")
     if f.get("suggested_code"):
         body += f"\n\n```suggestion\n{f['suggested_code']}\n```"
@@ -68,19 +68,23 @@ def _finding_comment(f: dict) -> dict:
             "side": "RIGHT", "body": body}
 
 
-def _review_body(doc: dict, model: str) -> str:
+def _review_body(doc: dict, model: str, agent) -> str:
     stats = doc["stats"]
     icon = {"PASS": "✅", "FAIL": "🛑"}.get(doc["verdict"], "⚠️")
+    persona = f"\n> {agent.emoji} **{agent.name}** — {agent.persona}\n" \
+        if agent.persona else ""
     lines = [
-        f"## {icon} Agentic review: **{doc['verdict']}**",
-        "",
-        f"| blocking | total | suppressed below threshold | model |",
-        f"|---|---|---|---|",
+        f"## {icon} {agent.name}: **{doc['verdict']}**",
+        persona,
+        f"| blocking | total | suppressed below threshold | model | thinking |",
+        f"|---|---|---|---|---|",
         f"| {stats['blocking']} | {stats['total']} | "
-        f"{stats.get('suppressed_below_threshold', 0)} | `{model}` |",
+        f"{stats.get('suppressed_below_threshold', 0)} | `{model}` | "
+        f"{agent.thinking} |",
         "",
         "_Verdict derives from rule metadata + finding counts — never from model "
-        "prose. Rules and reviewer tooling were loaded from the base ref._",
+        "prose. Rules, agent config, and reviewer tooling were loaded from the "
+        "base ref._",
     ]
     if doc.get("error"):
         lines.insert(2, f"Gate error (per rules `fail_mode`): `{doc['error']}`")
@@ -112,8 +116,9 @@ def main() -> int:
     payload = {
         "commit_id": head,
         "event": "REQUEST_CHANGES" if blocking else "COMMENT",
-        "body": _review_body(doc, outcome.model_id),
-        "comments": [_finding_comment(f) for f in doc["findings"][:MAX_INLINE]],
+        "body": _review_body(doc, outcome.model_id, ruleset.agent),
+        "comments": [_finding_comment(f, ruleset.agent)
+                     for f in doc["findings"][:MAX_INLINE]],
     }
     status, resp = _gh("POST", f"/repos/{repo}/pulls/{pr}/reviews", payload)
     if status == 422 and payload["comments"]:

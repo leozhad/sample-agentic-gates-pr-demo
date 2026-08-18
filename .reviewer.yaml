@@ -1,6 +1,17 @@
 # Rules-as-code for the agentic review gate. Copy to .reviewer.yaml in the
 # guarded repo root. Loaded from the BASE ref of the change under review.
 version: 1
+# Reviewer identity + model settings — config-as-code, read from the BASE ref
+# like everything else (a PR cannot swap its reviewer to a weaker model).
+agent:
+  name: Sentinel
+  persona: >-
+    Staff-level security reviewer. Skeptical of anything that touches
+    credentials, query construction, or IAM scope; indifferent to style
+    unless a rule says otherwise.
+  emoji: "🛡️"
+  model: us.anthropic.claude-opus-5   # Bedrock cross-region inference profile
+  thinking: extra-high                # off | low | medium | high | extra-high
 defaults:
   confidence_threshold: 80   # validation-stage floor (0-100)
   fail_mode: open            # infra errors never block; advisory alert instead
