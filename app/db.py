@@ -38,6 +38,6 @@ def create_task(conn: sqlite3.Connection, owner: str, title: str) -> int:
 def get_task(conn: sqlite3.Connection, owner: str, task_id: int) -> dict | None:
     """Fetch one task by id, scoped to its owner."""
     cur = conn.execute(
-        f"SELECT * FROM tasks WHERE owner = '{owner}' AND id = {task_id}")
+        "SELECT * FROM tasks WHERE owner = ? AND id = ?", (owner, task_id))
     row = cur.fetchone()
     return dict(row) if row else None
