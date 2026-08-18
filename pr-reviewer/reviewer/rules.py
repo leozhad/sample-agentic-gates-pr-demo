@@ -40,6 +40,7 @@ class AgentConfig:
     model: str = ""                    # empty -> harness default
     thinking: str = "off"              # off|low|medium|high|extra-high
     emoji: str = "🤖"
+    rules: tuple = ()          # rule-id prefixes owned; empty = all rules
 
     @property
     def thinking_effort(self):
@@ -75,6 +76,7 @@ class RuleSet:
     max_findings: int = 25
     rules: tuple[Rule, ...] = field(default_factory=tuple)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    agents: tuple = ()             # full panel; agent == agents[0]
 
     def by_id(self, rule_id: str) -> Rule | None:
         return next((r for r in self.rules if r.id == rule_id), None)
@@ -131,20 +133,33 @@ def load_rules(text: str) -> RuleSet:
     if not rules:
         raise RulesError("rules file declares no rules")
 
-    raw_agent = doc.get("agent") or {}
-    if not isinstance(raw_agent, dict):
-        raise RulesError("agent must be a mapping")
-    thinking = str(raw_agent.get("thinking", "off"))
-    if thinking not in THINKING_LEVELS:
-        raise RulesError(
-            f"agent.thinking must be one of {sorted(THINKING_LEVELS)}")
-    agent = AgentConfig(
-        name=str(raw_agent.get("name", "Agentic Review Gate"))[:80],
-        persona=str(raw_agent.get("persona", ""))[:300],
-        model=str(raw_agent.get("model", "")),
-        thinking=thinking,
-        emoji=str(raw_agent.get("emoji", "🤖"))[:8],
-    )
+    def _parse_agent(raw):
+        if not isinstance(raw, dict):
+            raise RulesError("agent must be a mapping")
+        thinking = str(raw.get("thinking", "off"))
+        if thinking not in THINKING_LEVELS:
+            raise RulesError(
+                f"agent.thinking must be one of {sorted(THINKING_LEVELS)}")
+        scope = raw.get("rules") or []
+        if not isinstance(scope, list):
+            raise RulesError("agent.rules must be a list of rule-id prefixes")
+        return AgentConfig(
+            name=str(raw.get("name", "Agentic Review Gate"))[:80],
+            persona=str(raw.get("persona", ""))[:300],
+            model=str(raw.get("model", "")),
+            thinking=thinking,
+            emoji=str(raw.get("emoji", "🤖"))[:8],
+            rules=tuple(str(s) for s in scope),
+        )
+
+    raw_agents = doc.get("agents")
+    if raw_agents is not None:
+        if not isinstance(raw_agents, list) or not raw_agents:
+            raise RulesError("agents must be a non-empty list")
+        agents = tuple(_parse_agent(r) for r in raw_agents)
+    else:
+        agents = (_parse_agent(doc.get("agent") or {}),)
+    agent = agents[0]
 
     return RuleSet(
         version=1,
@@ -153,4 +168,5 @@ def load_rules(text: str) -> RuleSet:
         max_findings=max_findings,
         rules=tuple(rules),
         agent=agent,
+        agents=agents,
     )

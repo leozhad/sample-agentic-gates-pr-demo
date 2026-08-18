@@ -12,6 +12,8 @@ metadata, so injected text cannot forge a pass.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import json
 import secrets
 from dataclasses import dataclass
@@ -58,37 +60,60 @@ def _rules_block(ruleset: RuleSet) -> str:
     return "\n".join(f"- {r.id}: {r.description} [{r.severity}]" for r in ruleset.rules)
 
 
+def _attempts(model_id: str, effort, budget: int):
+    """Yield (max_tokens, drop_temperature, extra_fields) payload attempts.
+
+    Dialects differ by model family: OpenAI models take reasoning.effort and
+    reject temperature outright; current Claude models (Opus 5, Fable 5) take
+    thinking.type=adaptive + output_config.effort and deprecate temperature;
+    older Claude models take thinking.type=enabled + budget_tokens.
+    """
+    openai = ".openai." in model_id or model_id.startswith("openai.")
+    if openai:
+        fields = {"reasoning": {"effort": effort}} if effort else None
+        yield 12000 if effort else 4000, True, fields
+        return
+    if effort:
+        yield 24000, True, {"thinking": {"type": "adaptive"},
+                            "output_config": {"effort": effort}}
+        yield budget + 4000, True, {"thinking": {"type": "enabled",
+                                                 "budget_tokens": budget}}
+        yield 4000, True, None   # last resort: thinking off
+    else:
+        yield 4000, False, None
+        yield 4000, True, None
+
+
 def _converse(client, model_id: str, system: str, user: str,
               effort: str | None = None, thinking_budget: int = 0) -> str:
-    kwargs = {
-        "modelId": model_id,
-        "system": [{"text": system}],
-        "messages": [{"role": "user", "content": [{"text": user}]}],
-        "inferenceConfig": {"maxTokens": 4000, "temperature": 0.0},
-    }
-    if effort:
-        # Adaptive extended thinking (Opus 5+): effort levels, temperature unset.
-        kwargs["inferenceConfig"] = {"maxTokens": 12000}
-        kwargs["additionalModelRequestFields"] = {
-            "thinking": {"type": "adaptive"},
-            "output_config": {"effort": effort}}
-    try:
-        resp = client.converse(**kwargs)
-    except client.exceptions.ValidationException:
-        if not effort:
-            raise
-        # Older Claude models: enabled-type thinking with a token budget.
-        kwargs["inferenceConfig"] = {"maxTokens": thinking_budget + 4000}
-        kwargs["additionalModelRequestFields"] = {
-            "thinking": {"type": "enabled",
-                         "budget_tokens": thinking_budget}}
-        resp = client.converse(**kwargs)
-    # With thinking enabled the content list holds reasoning blocks first;
-    # return the final text block.
-    for block in reversed(resp["output"]["message"]["content"]):
-        if "text" in block:
-            return block["text"]
-    raise KeyError("no text block in model response")
+    attempts = list(_attempts(model_id, effort, thinking_budget))
+    resp = None
+    for i, (max_tokens, drop_temp, fields) in enumerate(attempts):
+        kwargs = {
+            "modelId": model_id,
+            "system": [{"text": system}],
+            "messages": [{"role": "user", "content": [{"text": user}]}],
+            "inferenceConfig": {"maxTokens": max_tokens},
+        }
+        if not drop_temp:
+            kwargs["inferenceConfig"]["temperature"] = 0.0
+        if fields:
+            kwargs["additionalModelRequestFields"] = fields
+        try:
+            resp = client.converse(**kwargs)
+        except client.exceptions.ValidationException:
+            if i == len(attempts) - 1:
+                raise
+            continue
+        # Thinking models emit reasoning blocks before the text block; a run
+        # can also exhaust maxTokens mid-reasoning and emit no text at all —
+        # fall through to the next (cheaper) attempt when that happens.
+        for block in reversed(resp["output"]["message"]["content"]):
+            if "text" in block and block["text"].strip():
+                return block["text"]
+        if i == len(attempts) - 1:
+            raise KeyError("no text block in model response")
+    raise KeyError("unreachable")
 
 
 def review_diff(
@@ -97,13 +122,18 @@ def review_diff(
     model_id: str = DEFAULT_MODEL,
     region: str = "us-west-2",
     client=None,
+    agent=None,
 ) -> ReviewOutcome:
     """Run the two-stage review. Never raises on model/infra failure —
     returns the rules-file-configured fail-open/fail-closed GateResult instead.
 
     Precedence for the model: explicit rules-file `agent.model` wins over the
     caller's model_id (config-as-code from the base ref beats environment)."""
-    agent = ruleset.agent
+    agent = agent or ruleset.agent
+    if agent.rules:
+        scoped = tuple(r for r in ruleset.rules
+                       if any(r.id.startswith(pre) for pre in agent.rules))
+        ruleset = dataclasses.replace(ruleset, rules=scoped)
     model_id = agent.model or model_id
     budget = agent.thinking_budget
     effort = agent.thinking_effort
@@ -163,3 +193,21 @@ def _parse_scores(raw_text: str, n: int) -> dict[int, int]:
         return out
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         raise FindingsValidationError(f"validation stage returned bad scores: {exc}") from exc
+
+
+def review_panel(
+    diff: str,
+    ruleset: RuleSet,
+    model_id: str = DEFAULT_MODEL,
+    region: str = "us-west-2",
+    client=None,
+) -> list:
+    """Run every configured agent over the diff (each scoped to its own
+    rules). Returns [(AgentConfig, ReviewOutcome), ...] in config order.
+    Overall gate verdict = worst per-agent verdict; callers own that fold."""
+    panel = ruleset.agents or (ruleset.agent,)
+    return [
+        (a, review_diff(diff, ruleset, model_id=model_id, region=region,
+                        client=client, agent=a))
+        for a in panel
+    ]

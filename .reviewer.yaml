@@ -3,15 +3,38 @@
 version: 1
 # Reviewer identity + model settings — config-as-code, read from the BASE ref
 # like everything else (a PR cannot swap its reviewer to a weaker model).
-agent:
-  name: Sentinel
-  persona: >-
-    Staff-level security reviewer. Skeptical of anything that touches
-    credentials, query construction, or IAM scope; indifferent to style
-    unless a rule says otherwise.
-  emoji: "🛡️"
-  model: us.anthropic.claude-opus-5   # Bedrock cross-region inference profile
-  thinking: extra-high                # off | low | medium | high | extra-high
+# Review panel — each agent has its own persona, model, thinking level, and
+# rule scope (rule-id prefixes). Each posts its own review on the PR.
+agents:
+  - name: Sentinel
+    persona: >-
+      Staff-level security reviewer. Skeptical of anything that touches
+      credentials, query construction, or IAM scope; indifferent to style
+      unless a rule says otherwise.
+    emoji: "🛡️"
+    model: us.anthropic.claude-opus-5   # Bedrock cross-region inference profile
+    thinking: extra-high                # off | low | medium | high | extra-high | max
+    rules: [SEC-, INJ-, IAM-]
+  - name: Vector
+    persona: >-
+      Pragmatic staff engineer focused on correctness and maintainability.
+      Flags swallowed errors, misleading names, and fragile constructs; keeps
+      opinions to rules and lets style debates go.
+    emoji: "⚡"
+    model: us.openai.gpt-5.6-sol        # cross-model: OpenAI via Bedrock
+    thinking: high
+    rules: [STYLE-, ROB-]
+  - name: Atlas
+    persona: >-
+      Design reviewer. Looks one level above the diff: layering, module
+      boundaries, and contracts between components. Advisory only — flags
+      drift early, never blocks a merge.
+    emoji: "📐"
+    # Note: Fable 5 content-filters diffs containing exploit-shaped code,
+    # so the design seat runs the prior-gen Opus instead.
+    model: us.anthropic.claude-opus-4-8
+    thinking: medium
+    rules: [DES-]
 defaults:
   confidence_threshold: 80   # validation-stage floor (0-100)
   fail_mode: open            # infra errors never block; advisory alert instead
@@ -42,3 +65,19 @@ rules:
     severity: low
     blocking: false
     file_patterns: ["**/*.py"]
+  - id: ROB-201
+    description: Return values or errors silently discarded on operations that
+      can fail (I/O, network, subprocess), hiding failures from callers.
+    severity: medium
+    blocking: false
+  - id: DES-001
+    description: Layering violation — code reaches around a module boundary
+      (e.g. handlers building raw SQL instead of using the data layer, or
+      business logic importing transport internals).
+    severity: medium
+    blocking: false
+  - id: DES-002
+    description: Public function or endpoint contract changed (parameters,
+      return shape, status codes) without updating its callers or tests.
+    severity: medium
+    blocking: false

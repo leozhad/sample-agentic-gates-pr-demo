@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from reviewer.bedrock_reviewer import DEFAULT_MODEL, review_diff  # noqa: E402
+from reviewer.bedrock_reviewer import DEFAULT_MODEL, review_panel  # noqa: E402
 from reviewer.rules import load_rules  # noqa: E402
 from reviewer.verdict import Verdict  # noqa: E402
 
@@ -103,41 +103,45 @@ def main() -> int:
     rules_path = pathlib.Path(__file__).resolve().parents[1] / ".reviewer.yaml"
     ruleset = load_rules(rules_path.read_text())
 
-    outcome = review_diff(diff, ruleset,
-                          model_id=os.environ.get("REVIEWER_MODEL", DEFAULT_MODEL),
-                          region=region)
-    doc = json.loads(outcome.result.to_json())
-    print(json.dumps(doc, indent=2))
-    print(f"VERDICT={doc['verdict']} blocking={doc['stats']['blocking']} "
-          f"discovered={outcome.discovery_count} model={outcome.model_id}",
-          file=sys.stderr)
+    any_blocking = False
+    for agent, outcome in review_panel(
+            diff, ruleset,
+            model_id=os.environ.get("REVIEWER_MODEL", DEFAULT_MODEL),
+            region=region):
+        doc = json.loads(outcome.result.to_json())
+        print(json.dumps(doc, indent=2))
+        print(f"[{agent.name}] VERDICT={doc['verdict']} "
+              f"blocking={doc['stats']['blocking']} "
+              f"discovered={outcome.discovery_count} model={outcome.model_id}",
+              file=sys.stderr)
 
-    blocking = outcome.result.verdict in (Verdict.FAIL, Verdict.BLOCKED_ERROR)
-    payload = {
-        "commit_id": head,
-        "event": "REQUEST_CHANGES" if blocking else "COMMENT",
-        "body": _review_body(doc, outcome.model_id, ruleset.agent),
-        "comments": [_finding_comment(f, ruleset.agent)
-                     for f in doc["findings"][:MAX_INLINE]],
-    }
-    status, resp = _gh("POST", f"/repos/{repo}/pulls/{pr}/reviews", payload)
-    if status == 422 and payload["comments"]:
-        # A finding's line may fall outside the diff hunks — degrade gracefully
-        # to a body-only review rather than losing the verdict.
-        print(f"inline comments rejected ({resp.get('message')}); "
-              f"retrying body-only", file=sys.stderr)
-        extra = "\n".join(
-            f"- `{c['path']}:{c['line']}` — {c['body'].splitlines()[0]}"
-            for c in payload["comments"])
-        payload = {"commit_id": head, "event": payload["event"],
-                   "body": payload["body"] + "\n\n### Findings\n" + extra}
+        blocking = outcome.result.verdict in (Verdict.FAIL, Verdict.BLOCKED_ERROR)
+        any_blocking = any_blocking or blocking
+        payload = {
+            "commit_id": head,
+            "event": "REQUEST_CHANGES" if blocking else "COMMENT",
+            "body": _review_body(doc, outcome.model_id, agent),
+            "comments": [_finding_comment(f, agent)
+                         for f in doc["findings"][:MAX_INLINE]],
+        }
         status, resp = _gh("POST", f"/repos/{repo}/pulls/{pr}/reviews", payload)
-    if status >= 300:
-        print(f"failed to post review: HTTP {status} {resp}", file=sys.stderr)
-        return 1  # a gate that cannot report must not silently pass
-
-    print(f"posted review {resp.get('id')} ({payload['event']})", file=sys.stderr)
-    return 1 if blocking else 0
+        if status == 422 and payload["comments"]:
+            # A finding's line may fall outside the diff hunks — degrade
+            # gracefully to a body-only review rather than losing the verdict.
+            print(f"inline comments rejected ({resp.get('message')}); "
+                  f"retrying body-only", file=sys.stderr)
+            extra = "\n".join(
+                f"- `{c['path']}:{c['line']}` — {c['body'].splitlines()[0]}"
+                for c in payload["comments"])
+            payload = {"commit_id": head, "event": payload["event"],
+                       "body": payload["body"] + "\n\n### Findings\n" + extra}
+            status, resp = _gh("POST", f"/repos/{repo}/pulls/{pr}/reviews", payload)
+        if status >= 300:
+            print(f"failed to post review: HTTP {status} {resp}", file=sys.stderr)
+            return 1  # a gate that cannot report must not silently pass
+        print(f"posted {agent.name} review {resp.get('id')} "
+              f"({payload['event']})", file=sys.stderr)
+    return 1 if any_blocking else 0
 
 
 if __name__ == "__main__":
