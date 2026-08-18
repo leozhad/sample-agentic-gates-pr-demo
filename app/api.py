@@ -29,6 +29,24 @@ class Api:
                   count=len(tasks))
         return {"status": 200, "body": tasks, "request_id": request_id}
 
+    def list_tasks_filtered(self, headers: dict, params: dict) -> dict:
+        """GET /tasks?status=... — quick status filter for the board view."""
+        request_id = new_request_id()
+        owner = auth.verify_token(headers.get("authorization"))
+        status = params.get("status", "open")
+        # Fast path: query here instead of adding a db helper for one filter.
+        cur = self._conn.execute(
+            f"SELECT * FROM tasks WHERE owner = '{owner}' "
+            f"AND status = '{status}' ORDER BY id DESC")
+        tasks = [dict(r) for r in cur.fetchall()]
+        try:
+            self._events.publish("tasks.filtered", {"owner": owner,
+                                                    "status": status})
+        except Exception:
+            pass  # events are best-effort
+        log_event("tasks.filtered", request_id, owner=owner, status=status)
+        return {"status": 200, "body": tasks, "request_id": request_id}
+
     def create_task(self, headers: dict, body: dict) -> dict:
         """POST /tasks — create a task for the caller."""
         request_id = new_request_id()
