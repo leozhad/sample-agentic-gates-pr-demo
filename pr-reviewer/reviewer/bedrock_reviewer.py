@@ -19,6 +19,7 @@ import secrets
 from dataclasses import dataclass
 
 import boto3
+from botocore.config import Config as BotoConfig
 
 from .rules import RuleSet
 from .verdict import (Finding, FindingsValidationError, GateResult,
@@ -58,6 +59,9 @@ class ReviewOutcome:
 
 def _rules_block(ruleset: RuleSet) -> str:
     return "\n".join(f"- {r.id}: {r.description} [{r.severity}]" for r in ruleset.rules)
+
+
+USAGE_LOG: list = []   # per-call token usage, appended by _converse
 
 
 def _attempts(model_id: str, effort, budget: int):
@@ -105,6 +109,10 @@ def _converse(client, model_id: str, system: str, user: str,
             if i == len(attempts) - 1:
                 raise
             continue
+        u = resp.get("usage", {})
+        USAGE_LOG.append({"model": model_id,
+                          "in": u.get("inputTokens", 0),
+                          "out": u.get("outputTokens", 0)})
         # Thinking models emit reasoning blocks before the text block; a run
         # can also exhaust maxTokens mid-reasoning and emit no text at all —
         # fall through to the next (cheaper) attempt when that happens.
@@ -139,7 +147,13 @@ def review_diff(
     effort = agent.thinking_effort
     persona_line = (f"You are {agent.name}. {agent.persona}\n\n"
                     if agent.persona else "")
-    client = client or boto3.client("bedrock-runtime", region_name=region)
+    # Long thinking runs exceed botocore's default 60s read timeout; a
+    # timed-out persona degrades to ADVISORY_ERROR and fail-open masks it,
+    # so the client must wait as long as the models legitimately think.
+    client = client or boto3.client(
+        "bedrock-runtime", region_name=region,
+        config=BotoConfig(read_timeout=600, connect_timeout=10,
+                          retries={"total_max_attempts": 2}))
     tag = secrets.token_hex(8)
     wrapped = f"<untrusted-diff-{tag}>\n{diff}\n</untrusted-diff-{tag}>"
 

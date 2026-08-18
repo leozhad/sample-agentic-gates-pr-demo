@@ -1,0 +1,56 @@
+{
+ "schema": 1,
+ "applicationInfo": {
+  "name": "taskboard",
+  "description": "Demo taskboard service guarded by the PR-surface agentic gates"
+ },
+ "threats": [
+  {
+   "id": "T-001",
+   "statement": "An external actor supplying a crafted search or filter string [TB-INGRESS] can inject SQL through string-built LIKE clauses, which leads to disclosure or tampering of all task rows [TB-DATA]",
+   "stride": ["T", "I"],
+   "mitigations": [
+    "Parameterized queries only (rule SEC-001, blocking)",
+    "Sentinel persona + deterministic review on every PR"
+   ]
+  },
+  {
+   "id": "T-002",
+   "statement": "A debug or telemetry change [TB-PIPELINE] can log Authorization headers or tokens crossing the ingress [TB-INGRESS], which leads to credential disclosure in log storage",
+   "stride": ["I"],
+   "mitigations": [
+    "SEC-002 blocking rule (no secrets in logs)",
+    "Structured telemetry helpers scrub sensitive headers"
+   ]
+  },
+  {
+   "id": "T-003",
+   "statement": "A malicious change author [TB-PIPELINE] can embed instructions to the review agents in code or comments, which leads to the gate approving a harmful change if verdicts followed model prose",
+   "stride": ["E"],
+   "mitigations": [
+    "Verdicts derive from rule metadata + counts, never prose",
+    "Reviewer tooling and rules load from the BASE ref",
+    "INJ- rules flag attempts"
+   ]
+  },
+  {
+   "id": "T-004",
+   "statement": "An over-permissive IAM statement introduced in infra/service.template.json [TB-PIPELINE] can grant the service wildcard access, which leads to privilege escalation beyond the task datastore [TB-DATA]",
+   "stride": ["E"],
+   "mitigations": [
+    "Deterministic lane: wildcard-IAM check + IAM Access Analyzer ValidatePolicy",
+    "IAM-002 blocking rule in the agent panel"
+   ]
+  },
+  {
+   "id": "T-005",
+   "statement": "A defective publisher [TB-PIPELINE] can flood or poison the task-event topic, which leads to denial of service or bad state for downstream consumers [TB-EVENTS]",
+   "stride": ["T", "D"],
+   "mitigations": [
+    "Publish failures logged, dead-letter queue on consumers",
+    "Least-privilege sns:Publish scoped to the one topic"
+   ]
+  }
+ ],
+ "lastReviewed": "2026-08-18 \u2014 initial model for the taskboard service"
+}

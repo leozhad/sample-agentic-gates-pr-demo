@@ -1,0 +1,16 @@
+# Trust boundaries the threat model MUST cover (threat-model/validate.py
+# coverage check). Adding a boundary here without a referencing threat fails
+# the threat-model check on the PR.
+boundaries:
+  - id: TB-INGRESS
+    name: Caller to API
+    description: Untrusted task payloads, search strings, and auth headers entering the service
+  - id: TB-DATA
+    name: Service to task datastore
+    description: Service queries against the task store
+  - id: TB-EVENTS
+    name: Service to event consumers
+    description: Task events published to SNS and consumed downstream
+  - id: TB-PIPELINE
+    name: Change author to main
+    description: Code/infra changes flowing through the PR review gate

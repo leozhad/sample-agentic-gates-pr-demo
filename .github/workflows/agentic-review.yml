@@ -1,15 +1,21 @@
-# Agentic review gate — PR surface (SPEC §3.6).
-# Copy into the guarded repo as .github/workflows/agentic-review.yml.
+# Agentic review gate — PR surface at full-gate parity with the deploy tiers.
+# Three lanes, mirroring the Tier 1 pipeline's AutomatedGates stage:
+#   review        — two-stage agentic panel (Sentinel/Vector/Atlas), blocking
+#   deterministic — checks.py (wildcard IAM + Access Analyzer) + cfn-guard, blocking
+#   threat-model  — validate.py (schema/coverage/staleness, blocking)
+#                   + STRIDE agent delta proposal (advisory)
+# Deliberate gap vs Tier 1: Inspector SBOM scan (advisory there) stays on the
+# deploy surface; Dependabot owns dependency alerts on the PR surface.
 #
-# Anti-tamper: the gate tooling (pr-reviewer/) and rules (.reviewer.yaml) are
-# executed from the PR's BASE ref via a second checkout — a PR cannot rewrite
-# the reviewer or rules that review it. Same property as the deploy-surface
-# tiers, expressed in Actions.
+# Anti-tamper: gate tooling (pr-reviewer/, deterministic/, threat-model/*.py)
+# and rules (.reviewer.yaml, rules.guard) execute from the PR's BASE ref via a
+# second checkout — a PR cannot rewrite the reviewer, checks, or rules that
+# review it. The threat model itself (app.tc.json, boundaries.yaml) is DATA
+# under review and reads from the PR head, exactly like Tier 1.
 #
 # Auth: GitHub OIDC -> aws-actions/configure-aws-credentials -> an IAM role
-# scoped to this repo with bedrock:InvokeModel on us.anthropic profiles only.
-# No static keys anywhere. Set the role ARN once:
-#   gh variable set REVIEWER_ROLE_ARN --body arn:aws:iam::<acct>:role/agentic-gates-pr-reviewer
+# scoped to this repo with bedrock:InvokeModel (panel + STRIDE agent) and
+# access-analyzer:ValidatePolicy (deterministic lane). No static keys.
 name: Agentic review gate
 on:
   pull_request:
@@ -55,3 +61,95 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python base-tooling/pr-reviewer/review_pr.py
+
+  deterministic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+
+      - name: Check out gate tooling from the BASE ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-tooling
+
+      - name: Assume reviewer role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.REVIEWER_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Install runtime deps
+        run: pip install --quiet --upgrade boto3 pyyaml
+
+      - name: IaC checks (wildcard IAM + Access Analyzer) — blocking
+        run: >
+          python base-tooling/deterministic/checks.py
+          --templates 'infra/*.template.json' --region us-west-2
+
+      - name: cfn-guard (blocking on rule failure, fail-open if unavailable)
+        run: |
+          set +e
+          curl --proto '=https' --tlsv1.2 -sSf \
+            https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh \
+            | sh > /tmp/guard-install.log 2>&1
+          GUARD=$(find ~/.guard -name cfn-guard -type f | head -1)
+          if [ -z "$GUARD" ]; then echo 'cfn-guard unavailable (advisory skip)'; exit 0; fi
+          for T in infra/*.template.json; do
+            "$GUARD" validate --data "$T" --rules base-tooling/deterministic/rules.guard --show-summary fail
+            EC=$?
+            if [ $EC -eq 19 ] || [ $EC -eq 5 ]; then echo "cfn-guard: rule failures in $T"; exit $EC; fi
+          done
+          exit 0
+
+  threat-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out PR (full history for changed-files diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out gate tooling from the BASE ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-tooling
+
+      - name: Assume reviewer role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.REVIEWER_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Install runtime deps
+        run: pip install --quiet --upgrade boto3 pyyaml
+
+      - name: Threat-model gate (schema/coverage/staleness) — blocking
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > /tmp/changed.txt
+          python base-tooling/threat-model/validate.py \
+            --model threat-model/app.tc.json \
+            --boundaries threat-model/boundaries.yaml \
+            --changed-files /tmp/changed.txt
+
+      - name: STRIDE agent delta proposal — advisory, never blocks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff "$BASE_SHA...$HEAD_SHA" > /tmp/change.diff
+          python base-tooling/threat-model/stride_agent.py \
+            --diff /tmp/change.diff \
+            --model-file threat-model/app.tc.json \
+            --region us-west-2 --report /tmp/stride.json
+          echo '### STRIDE agent — proposed threat-model delta (advisory)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/stride.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
