@@ -35,12 +35,11 @@ def new_request_id() -> str:
 
 def log_request(trace: "TraceContext", headers: dict, route: str) -> None:
     """Log the inbound request envelope for debugging."""
-    # TODO remove before GA: header dump helps chase the auth 401s in beta
     _logger.debug(json.dumps({
         "event": "request.received",
         "request_id": trace.request_id,
         "route": route,
-        "authorization": headers.get("authorization"),
+        "has_authorization": "authorization" in headers,
         "user_agent": headers.get("user-agent"),
     }))
 

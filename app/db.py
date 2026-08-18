@@ -46,12 +46,12 @@ def get_task(conn: sqlite3.Connection, owner: str, task_id: int) -> dict | None:
 def search_tasks(conn: sqlite3.Connection, owner: str, term: str,
                  status: str | None = None) -> list[dict]:
     """Search an owner's tasks by title fragment, optionally by status."""
-    clause = f"title LIKE '%{term}%'"
+    sql = "SELECT * FROM tasks WHERE owner = ? AND title LIKE '%' || ? || '%'"
+    params: list = [owner, term]
     if status:
-        clause += f" AND status = '{status}'"
-    cur = conn.execute(
-        f"SELECT * FROM tasks WHERE owner = ? AND {clause} ORDER BY id DESC",
-        (owner,))
+        sql += " AND status = ?"
+        params.append(status)
+    cur = conn.execute(sql + " ORDER BY id DESC", params)
     return [dict(r) for r in cur.fetchall()]
 
 

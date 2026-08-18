@@ -33,5 +33,6 @@ class TtlCache:
         for key in [k for k in self._data if k.startswith(prefix)]:
             self._data.pop(key, None)
 
-    def stats(self):
+    def stats(self) -> dict:
+        """Report entry count and TTL for the ops dashboard."""
         return {"entries": len(self._data), "ttl_seconds": self._ttl}

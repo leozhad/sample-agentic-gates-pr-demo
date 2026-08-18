@@ -39,10 +39,14 @@
                   "Effect": "Allow",
                   "Action": [
                     "sqs:SendMessage",
-                    "sqs:GetQueueUrl",
-                    "sns:Publish"
+                    "sqs:GetQueueUrl"
                   ],
-                  "Resource": "*"
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SearchDlq",
+                      "Arn"
+                    ]
+                  }
                 }
               ]
             }
