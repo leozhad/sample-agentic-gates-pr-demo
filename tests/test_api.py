@@ -10,7 +10,8 @@ from app.events import EventPublisher
 def _api():
     os.environ["TASKBOARD_TOKEN_SECRET"] = "s3cret"
     cfg = Config(database_path=":memory:", events_topic_arn="",
-                 cache_ttl_seconds=30, log_level="INFO")
+                 cache_ttl_seconds=30, log_level="INFO",
+                 trace_sample_rate=1.0)
     return Api(cfg, publisher=EventPublisher(""))
 
 
@@ -31,3 +32,13 @@ def test_create_and_list_roundtrip():
 def test_create_requires_title():
     api = _api()
     assert api.create_task(_headers(), {})["status"] == 400
+
+
+def test_search_roundtrip_and_cache_invalidation():
+    api = _api()
+    api.create_task(_headers(), {"title": "quarterly spec"})
+    first = api.search_tasks(_headers(), {"q": "spec"})
+    assert first["status"] == 200 and len(first["body"]) == 1
+    api.create_task(_headers(), {"title": "spec addendum"})
+    second = api.search_tasks(_headers(), {"q": "spec"})
+    assert len(second["body"]) == 2  # write invalidated the search cache

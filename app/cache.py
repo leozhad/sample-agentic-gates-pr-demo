@@ -27,3 +27,12 @@ class TtlCache:
     def invalidate(self, key: str) -> None:
         """Drop one key (called on writes)."""
         self._data.pop(key, None)
+
+    def invalidate_prefix(self, prefix: str) -> None:
+        """Drop every key under a prefix (owner-scoped write invalidation)."""
+        for key in [k for k in self._data if k.startswith(prefix)]:
+            self._data.pop(key, None)
+
+    def stats(self) -> dict:
+        """Report entry count and TTL for the ops dashboard."""
+        return {"entries": len(self._data), "ttl_seconds": self._ttl}

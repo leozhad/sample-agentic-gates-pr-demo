@@ -3,7 +3,7 @@ from . import auth, db
 from .cache import TtlCache
 from .config import Config
 from .events import EventPublisher
-from .telemetry import log_event, new_request_id
+from .telemetry import TraceContext, log_event, log_request, new_request_id
 
 
 class Api:
@@ -29,6 +29,34 @@ class Api:
                   count=len(tasks))
         return {"status": 200, "body": tasks, "request_id": request_id}
 
+    def search_tasks(self, headers: dict, params: dict) -> dict:
+        """GET /tasks/search?q=&status= — title search across the caller's tasks."""
+        trace = TraceContext(self._config.trace_sample_rate)
+        log_request(trace, headers, "tasks.search")
+        trace.span("auth")
+        owner = auth.verify_token(headers.get("authorization"))
+        term = str(params.get("q", "")).strip()
+        if not term:
+            return {"status": 400, "body": {"error": "q required"},
+                    "request_id": trace.request_id}
+        status = params.get("status") or None
+        cache_key = f"search:{owner}:{term}:{status}"
+        trace.span("cache")
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            log_event("tasks.search", trace.request_id, owner=owner,
+                      cache="hit", spans=trace.durations_ms())
+            return {"status": 200, "body": cached,
+                    "request_id": trace.request_id}
+        trace.span("query")
+        results = db.search_tasks(self._conn, owner, term, status)
+        self._cache.put(cache_key, results)
+        trace.span("publish")
+        self._events.task_searched(owner, len(term), len(results))
+        log_event("tasks.search", trace.request_id, owner=owner,
+                  cache="miss", hits=len(results), spans=trace.durations_ms())
+        return {"status": 200, "body": results, "request_id": trace.request_id}
+
     def create_task(self, headers: dict, body: dict) -> dict:
         """POST /tasks — create a task for the caller."""
         request_id = new_request_id()
@@ -39,6 +67,7 @@ class Api:
                     "request_id": request_id}
         task_id = db.create_task(self._conn, owner, title)
         self._cache.invalidate(f"tasks:{owner}")
+        self._cache.invalidate_prefix(f"search:{owner}:")
         self._events.publish("task.created", {"owner": owner, "id": task_id})
         log_event("tasks.create", request_id, owner=owner, id=task_id)
         return {"status": 201, "body": {"id": task_id},

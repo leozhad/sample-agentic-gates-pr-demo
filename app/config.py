@@ -11,6 +11,7 @@ class Config:
     events_topic_arn: str
     cache_ttl_seconds: int
     log_level: str
+    trace_sample_rate: float
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -20,4 +21,5 @@ class Config:
             events_topic_arn=os.environ.get("TASKBOARD_TOPIC_ARN", ""),
             cache_ttl_seconds=int(os.environ.get("TASKBOARD_CACHE_TTL", "30")),
             log_level=os.environ.get("TASKBOARD_LOG_LEVEL", "INFO"),
+            trace_sample_rate=float(os.environ.get("TASKBOARD_TRACE_SAMPLE", "1.0")),
         )

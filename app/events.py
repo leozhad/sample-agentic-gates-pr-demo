@@ -24,3 +24,8 @@ class EventPublisher:
             )
         except Exception:  # noqa: BLE001 — telemetry, not control flow
             pass
+
+    def task_searched(self, owner: str, term_length: int, hits: int) -> None:
+        """Publish a task.searched event (term itself is never sent)."""
+        self.publish("task.searched", {
+            "owner": owner, "term_length": term_length, "hits": hits})
