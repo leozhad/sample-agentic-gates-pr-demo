@@ -2,28 +2,56 @@
   "AWSTemplateFormatVersion": "2010-09-09",
   "Description": "taskboard service role and event topic",
   "Resources": {
-    "EventsTopic": {"Type": "AWS::SNS::Topic"},
+    "EventsTopic": {
+      "Type": "AWS::SNS::Topic"
+    },
     "ServiceRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",
-          "Statement": [{"Effect": "Allow",
-            "Principal": {"Service": "lambda.amazonaws.com"},
-            "Action": "sts:AssumeRole"}]
-        },
-        "Policies": [{
-          "PolicyName": "taskboard-service",
-          "PolicyDocument": {
-            "Version": "2012-10-17",
-            "Statement": [{
+          "Statement": [
+            {
               "Effect": "Allow",
-              "Action": ["sns:Publish"],
-              "Resource": {"Ref": "EventsTopic"}
-            }]
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "taskboard-service",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:Publish"
+                  ],
+                  "Resource": {
+                    "Ref": "EventsTopic"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:SendMessage",
+                    "sqs:GetQueueUrl",
+                    "sns:Publish"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
           }
-        }]
+        ]
       }
+    },
+    "SearchDlq": {
+      "Type": "AWS::SQS::Queue"
     }
   }
 }
