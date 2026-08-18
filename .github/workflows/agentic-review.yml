@@ -89,18 +89,21 @@ jobs:
           python base-tooling/deterministic/checks.py
           --templates 'infra/*.template.json' --region us-west-2
 
-      - name: cfn-guard (blocking on rule failure, fail-open if unavailable)
+      - name: cfn-guard (blocking on rule failure or validate error; install fail-open per G4)
         run: |
           set +e
           curl --proto '=https' --tlsv1.2 -sSf \
             https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh \
             | sh > /tmp/guard-install.log 2>&1
           GUARD=$(find ~/.guard -name cfn-guard -type f | head -1)
-          if [ -z "$GUARD" ]; then echo 'cfn-guard unavailable (advisory skip)'; exit 0; fi
+          if [ -z "$GUARD" ]; then
+            echo 'cfn-guard unavailable (advisory skip — checks.py stays the hard layer)'
+            exit 0
+          fi
           for T in infra/*.template.json; do
             "$GUARD" validate --data "$T" --rules base-tooling/deterministic/rules.guard --show-summary fail
             EC=$?
-            if [ $EC -eq 19 ] || [ $EC -eq 5 ]; then echo "cfn-guard: rule failures in $T"; exit $EC; fi
+            if [ $EC -ne 0 ]; then echo "cfn-guard: failure (exit $EC) in $T"; exit $EC; fi
           done
           exit 0
 
