@@ -34,16 +34,13 @@ class Api:
         request_id = new_request_id()
         owner = auth.verify_token(headers.get("authorization"))
         status = params.get("status", "open")
-        # Fast path: query here instead of adding a db helper for one filter.
-        cur = self._conn.execute(
-            f"SELECT * FROM tasks WHERE owner = '{owner}' "
-            f"AND status = '{status}' ORDER BY id DESC")
-        tasks = [dict(r) for r in cur.fetchall()]
+        tasks = db.list_tasks_by_status(self._conn, owner, status)
         try:
             self._events.publish("tasks.filtered", {"owner": owner,
                                                     "status": status})
-        except Exception:
-            pass  # events are best-effort
+        except Exception as exc:
+            log_event("tasks.filtered.publish_error", request_id,
+                      owner=owner, error=str(exc))
         log_event("tasks.filtered", request_id, owner=owner, status=status)
         return {"status": 200, "body": tasks, "request_id": request_id}
 
