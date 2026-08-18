@@ -46,13 +46,15 @@ def _iter_policies(template: dict):
         props = res.get("Properties") or {}
         for pol in props.get("Policies") or []:
             if isinstance(pol, dict) and "PolicyDocument" in pol:
-                yield name, pol["PolicyDocument"]
+                yield name, pol["PolicyDocument"], "IDENTITY_POLICY"
             elif isinstance(pol, dict) and "Statement" in pol:  # SAM inline policy
-                yield name, pol
+                yield name, pol, "IDENTITY_POLICY"
         if "PolicyDocument" in props:
-            yield name, props["PolicyDocument"]
+            yield name, props["PolicyDocument"], "IDENTITY_POLICY"
         if "AssumeRolePolicyDocument" in props:
-            yield f"{name}(trust)", props["AssumeRolePolicyDocument"]
+            # Trust policies carry Principal and no Resource — they validate
+            # as RESOURCE_POLICY, not IDENTITY_POLICY (else false ERRORs).
+            yield f"{name}(trust)", props["AssumeRolePolicyDocument"], "RESOURCE_POLICY"
 
 
 def check_wildcards(name: str, doc: dict) -> list[str]:
@@ -83,14 +85,17 @@ def _has_intrinsics(doc) -> bool:
     return False
 
 
-def check_access_analyzer(name: str, doc: dict, client) -> list[str]:
+def check_access_analyzer(name: str, doc: dict, client, policy_type: str) -> list[str]:
     out = []
     if _has_intrinsics(doc):
         return [f"[advisory] {name}: contains CFN intrinsics — Access Analyzer "
                 f"skipped (wildcard check still applied)"]
     try:
-        resp = client.validate_policy(
-            policyDocument=json.dumps(doc), policyType="IDENTITY_POLICY")
+        kwargs = {"policyDocument": json.dumps(doc), "policyType": policy_type}
+        if policy_type == "RESOURCE_POLICY":
+            # Role trust policies have an implicit Resource (the role itself)
+            kwargs["validatePolicyResourceType"] = "AWS::IAM::AssumeRolePolicyDocument"
+        resp = client.validate_policy(**kwargs)
         for f in resp.get("findings", []):
             level = f["findingType"]
             tag = "[BLOCKING]" if level in ("ERROR", "SECURITY_WARNING") else "[advisory]"
@@ -116,7 +121,7 @@ def main() -> int:
         return 0
     for path in paths:
         template = yaml.load(pathlib.Path(path).read_text(), Loader=_CfnLoader)
-        for name, doc in _iter_policies(template or {}):
+        for name, doc, ptype in _iter_policies(template or {}):
             # Skip docs full of intrinsics that don't resolve statically
             try:
                 json.dumps(doc)
@@ -125,7 +130,7 @@ def main() -> int:
             findings += [f"{path} :: {m}" for m in check_wildcards(name, doc)]
             if client:
                 findings += [f"{path} :: {m}"
-                             for m in check_access_analyzer(name, doc, client)]
+                             for m in check_access_analyzer(name, doc, client, ptype)]
 
     blocking = [f for f in findings if "[BLOCKING]" in f]
     for f in findings:
