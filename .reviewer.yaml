@@ -35,6 +35,23 @@ agents:
     model: us.anthropic.claude-opus-4-8
     thinking: medium
     rules: [DES-]
+  - name: Aria
+    persona: >-
+      Accessibility reviewer. Holds WCAG 2.2 AA as the bar: every control
+      reachable and operable by keyboard, every non-text thing named, text
+      that meets contrast, and no motion or colour that carries meaning on
+      its own. Blocks — an inaccessible ship is a broken ship.
+    emoji: "♿"
+    # Amazon's newest frontier Claude. This seat is scoped to presentation
+    # files (see file_patterns), which also keeps a content-filtering model
+    # away from the exploit-shaped security demos elsewhere in the diff — a
+    # blocking seat that refuses its input is worse than no seat, so it also
+    # fails CLOSED on error (verdict.error_result).
+    model: us.anthropic.claude-fable-5
+    thinking: high
+    rules: [A11Y-]
+    file_patterns: ["**/*.html", "**/*.htm", "**/*.css", "**/*.tsx", "**/*.jsx",
+                    "**/*.svg", "**/arcade.py", "**/web/src/**", "**/*.vue"]
 defaults:
   confidence_threshold: 80   # validation-stage floor (0-100)
   fail_mode: open            # infra errors never block; advisory alert instead
@@ -81,3 +98,38 @@ rules:
       return shape, status codes) without updating its callers or tests.
     severity: medium
     blocking: false
+  - id: A11Y-001
+    description: Interactive controls must be real, keyboard-operable elements.
+      A div/span acting as a button (click handler, no role, no tabindex, no
+      key handler) fails WCAG 2.1.1 — use a button/a, or role + tabindex +
+      Enter/Space handling.
+    severity: high
+    blocking: true
+    file_patterns: ["**/*.html", "**/*.tsx", "**/*.jsx", "**/arcade.py", "**/*.vue"]
+  - id: A11Y-002
+    description: Non-text content needs an accessible name or text
+      alternative — canvas/img/svg/video/icon-only controls need alt,
+      aria-label, or an adjacent text equivalent (WCAG 1.1.1).
+    severity: high
+    blocking: true
+    file_patterns: ["**/*.html", "**/*.tsx", "**/*.jsx", "**/*.svg", "**/arcade.py"]
+  - id: A11Y-003
+    description: Text and meaningful UI must meet WCAG AA contrast — 4.5:1 for
+      body text, 3:1 for large text and graphical/UI boundaries. Flag literal
+      colour pairs in the diff that fall below the bar.
+    severity: high
+    blocking: true
+    file_patterns: ["**/*.html", "**/*.css", "**/*.tsx", "**/arcade.py"]
+  - id: A11Y-004
+    description: Motion and colour must not be the only carrier of meaning, and
+      flashing must be safe — honour prefers-reduced-motion and keep flashes
+      under three per second (WCAG 2.3.1, 1.4.1).
+    severity: high
+    blocking: true
+    file_patterns: ["**/*.html", "**/*.css", "**/*.tsx", "**/arcade.py"]
+  - id: A11Y-101
+    description: Document and form semantics — html lang, one h1, landmark
+      structure, labels programmatically associated with their controls.
+    severity: low
+    blocking: false
+    file_patterns: ["**/*.html", "**/*.tsx", "**/arcade.py"]

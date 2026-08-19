@@ -124,6 +124,25 @@ def _converse(client, model_id: str, system: str, user: str,
     raise KeyError("unreachable")
 
 
+def _scope_diff(diff: str, patterns) -> str:
+    """Keep only the per-file sections of a unified diff matching `patterns`.
+
+    Splitting on 'diff --git' keeps each file's hunks intact, so a scoped seat
+    still sees complete context for the files it owns.
+    """
+    import fnmatch
+    out, keep = [], False
+    for line in diff.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            parts = line.split()
+            path = parts[-1][2:] if len(parts) >= 4 else ""
+            keep = any(fnmatch.fnmatch(path, p) or fnmatch.fnmatch("/" + path, p)
+                       for p in patterns)
+        if keep:
+            out.append(line)
+    return "".join(out)
+
+
 def review_diff(
     diff: str,
     ruleset: RuleSet,
@@ -142,6 +161,13 @@ def review_diff(
         scoped = tuple(r for r in ruleset.rules
                        if any(r.id.startswith(pre) for pre in agent.rules))
         ruleset = dataclasses.replace(ruleset, rules=scoped)
+    if agent.file_patterns:
+        # A seat only sees the files it owns. Cheaper, more focused, and it
+        # keeps a content-filtering model away from parts of the diff it has
+        # no business reviewing (e.g. the deliberate exploit demos).
+        diff = _scope_diff(diff, agent.file_patterns)
+        if not diff.strip():
+            return ReviewOutcome(compute_verdict([], ruleset), agent.model or model_id, 0)
     model_id = agent.model or model_id
     budget = agent.thinking_budget
     effort = agent.thinking_effort
@@ -187,9 +213,9 @@ def review_diff(
         ]
         return ReviewOutcome(compute_verdict(scored, ruleset), model_id, len(candidates))
     except FindingsValidationError as exc:
-        return ReviewOutcome(error_result(ruleset, f"contract violation: {exc}"), model_id, 0)
+        return ReviewOutcome(error_result(ruleset, agent=agent, error=f"contract violation: {exc}"), model_id, 0)
     except Exception as exc:  # noqa: BLE001 — gate must never wedge the pipeline
-        return ReviewOutcome(error_result(ruleset, f"{type(exc).__name__}: {exc}"), model_id, 0)
+        return ReviewOutcome(error_result(ruleset, agent=agent, error=f"{type(exc).__name__}: {exc}"), model_id, 0)
 
 
 def _parse_scores(raw_text: str, n: int) -> dict[int, int]:

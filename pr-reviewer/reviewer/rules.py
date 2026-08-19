@@ -41,6 +41,7 @@ class AgentConfig:
     thinking: str = "off"              # off|low|medium|high|extra-high
     emoji: str = "🤖"
     rules: tuple = ()          # rule-id prefixes owned; empty = all rules
+    file_patterns: tuple = ()  # diff scope; empty = the whole diff
 
     @property
     def thinking_effort(self):
@@ -143,6 +144,9 @@ def load_rules(text: str) -> RuleSet:
         scope = raw.get("rules") or []
         if not isinstance(scope, list):
             raise RulesError("agent.rules must be a list of rule-id prefixes")
+        globs = raw.get("file_patterns") or []
+        if not isinstance(globs, list):
+            raise RulesError("agent.file_patterns must be a list of globs")
         return AgentConfig(
             name=str(raw.get("name", "Agentic Review Gate"))[:80],
             persona=str(raw.get("persona", ""))[:300],
@@ -150,6 +154,7 @@ def load_rules(text: str) -> RuleSet:
             thinking=thinking,
             emoji=str(raw.get("emoji", "🤖"))[:8],
             rules=tuple(str(s) for s in scope),
+            file_patterns=tuple(str(g) for g in globs),
         )
 
     raw_agents = doc.get("agents")

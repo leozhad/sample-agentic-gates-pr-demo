@@ -128,7 +128,20 @@ def compute_verdict(findings: list[Finding], ruleset: RuleSet) -> GateResult:
     )
 
 
-def error_result(ruleset: RuleSet, error: str) -> GateResult:
-    """Infra/parse failure path: fail-open (advisory) or fail-closed per rules."""
-    verdict = Verdict.ADVISORY_ERROR if ruleset.fail_mode == "open" else Verdict.BLOCKED_ERROR
+def error_result(ruleset: RuleSet, error: str, agent=None) -> GateResult:
+    """Infra/parse failure path: fail-open (advisory) or fail-closed per rules.
+
+    A seat that owns blocking rules fails CLOSED regardless of the global
+    fail_mode. Otherwise a model that times out — or refuses the diff, which
+    content-filtering models do on exploit-shaped code — would degrade to
+    ADVISORY_ERROR and let a blocking gate pass on no evidence at all.
+    """
+    owns_blocking = bool(
+        agent and agent.rules
+        and any(r.blocking and any(r.id.startswith(p) for p in agent.rules)
+                for r in ruleset.rules)
+    )
+    verdict = (Verdict.BLOCKED_ERROR
+               if owns_blocking or ruleset.fail_mode != "open"
+               else Verdict.ADVISORY_ERROR)
     return GateResult(verdict=verdict, findings=(), suppressed_below_threshold=0, error=error)
