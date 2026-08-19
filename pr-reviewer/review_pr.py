@@ -91,6 +91,45 @@ def _review_body(doc: dict, model: str, agent) -> str:
     return "\n".join(lines)
 
 
+def _dismiss_stale_blocks(repo: str, pr: str, agent) -> None:
+    """Clear this seat's own earlier REQUEST_CHANGES once it passes.
+
+    GitHub keeps a CHANGES_REQUESTED review authoritative until it is dismissed
+    or superseded by an APPROVED one, and this reviewer posts COMMENT on a pass.
+    Without this, a PR that was fixed still reads "changes requested" while
+    every check is green and every seat passes — the state contradicts the
+    verdict. Dismissing is the honest correction: it withdraws the seat's own
+    stale objection without the bot approving anyone's code.
+
+    Only reviews whose body identifies THIS seat are touched, so one seat
+    passing never clears another seat's live block. Best-effort by design: a
+    cosmetic cleanup must not fail a gate that has already reported.
+    """
+    status, reviews = _gh("GET", f"/repos/{repo}/pulls/{pr}/reviews")
+    if status >= 300 or not isinstance(reviews, list):
+        print(f"could not list reviews to dismiss stale blocks: HTTP {status}",
+              file=sys.stderr)
+        return
+    marker = f"{agent.name}:"          # matches the "## <sigil> Name: **FAIL**" header
+    for review in reviews:
+        if review.get("state") != "CHANGES_REQUESTED":
+            continue
+        if marker not in (review.get("body") or ""):
+            continue
+        code, resp = _gh(
+            "PUT", f"/repos/{repo}/pulls/{pr}/reviews/{review['id']}/dismissals",
+            {"message": f"Superseded: {agent.name} re-reviewed this revision "
+                        f"and it passes. Dismissed so the PR state matches the "
+                        f"current verdict.",
+             "event": "DISMISS"})
+        if code >= 300:
+            print(f"could not dismiss stale {agent.name} review "
+                  f"{review['id']}: HTTP {code} {resp}", file=sys.stderr)
+        else:
+            print(f"dismissed stale {agent.name} review {review['id']}",
+                  file=sys.stderr)
+
+
 def main() -> int:
     repo = os.environ["GITHUB_REPOSITORY"]
     pr = os.environ["PR_NUMBER"]
@@ -141,6 +180,8 @@ def main() -> int:
             return 1  # a gate that cannot report must not silently pass
         print(f"posted {agent.name} review {resp.get('id')} "
               f"({payload['event']})", file=sys.stderr)
+        if not blocking:
+            _dismiss_stale_blocks(repo, pr, agent)
     return 1 if any_blocking else 0
 
 
