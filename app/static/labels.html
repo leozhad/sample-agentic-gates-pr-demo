@@ -8,7 +8,13 @@
     :root {
       --bg: #0d1117;
       --surface: #161b22;
-      --border: #30363d;
+      /* WCAG 1.4.11 applies to UI component boundaries, not to decorative
+         separators, so these are deliberately two different colours:
+         --control-border is ~4.1:1 on --bg and ~3.8:1 on --surface (a text
+         input's border is the only thing locating the field), while --divider
+         stays subtle because the table's row rules carry no information. */
+      --control-border: #6e7681;
+      --divider: #30363d;
       --text: #e6edf3;      /* 14.6:1 on --bg */
       --muted: #9aa7b8;     /* 7.4:1 on --bg — comfortably past AA */
       --accent: #58a6ff;    /* 6.4:1 on --bg */
@@ -25,8 +31,8 @@
     .field { display: flex; flex-direction: column; gap: 0.25rem; }
     label { font-size: 0.875rem; color: var(--muted); }
     input, button {
-      font: inherit; border-radius: 6px; border: 1px solid var(--border);
-      padding: 0.5rem 0.75rem;
+      font: inherit; border-radius: 6px; padding: 0.5rem 0.75rem;
+      border: 1px solid var(--control-border);
     }
     input { background: var(--surface); color: var(--text); min-width: 14rem; }
     .hint { font-size: 0.8125rem; color: var(--muted); }
@@ -45,10 +51,11 @@
     table { border-collapse: collapse; width: 100%; margin-top: 1.5rem; }
     caption { text-align: left; color: var(--muted); padding-bottom: 0.5rem; }
     th, td {
-      text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border);
+      text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--divider);
     }
     .pill {
-      display: inline-block; border: 1px solid var(--border); border-radius: 999px;
+      display: inline-block; border: 1px solid var(--control-border);
+      border-radius: 999px;
       padding: 0.125rem 0.625rem; font-size: 0.8125rem;
     }
     .sr-only {
