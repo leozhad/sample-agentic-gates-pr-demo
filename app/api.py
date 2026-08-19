@@ -29,6 +29,21 @@ class Api:
                   count=len(tasks))
         return {"status": 200, "body": tasks, "request_id": request_id}
 
+    def list_tasks_filtered(self, headers: dict, params: dict) -> dict:
+        """GET /tasks?status=... — quick status filter for the board view."""
+        request_id = new_request_id()
+        owner = auth.verify_token(headers.get("authorization"))
+        status = params.get("status", "open")
+        tasks = db.list_tasks_by_status(self._conn, owner, status)
+        try:
+            self._events.publish("tasks.filtered", {"owner": owner,
+                                                    "status": status})
+        except Exception as exc:
+            log_event("tasks.filtered.publish_error", request_id,
+                      owner=owner, error=str(exc))
+        log_event("tasks.filtered", request_id, owner=owner, status=status)
+        return {"status": 200, "body": tasks, "request_id": request_id}
+
     def create_task(self, headers: dict, body: dict) -> dict:
         """POST /tasks — create a task for the caller."""
         request_id = new_request_id()

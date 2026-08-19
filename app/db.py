@@ -27,6 +27,15 @@ def list_tasks(conn: sqlite3.Connection, owner: str) -> list[dict]:
     return [dict(r) for r in cur.fetchall()]
 
 
+def list_tasks_by_status(conn: sqlite3.Connection, owner: str,
+                         status: str) -> list[dict]:
+    """Return one owner's tasks filtered by status, newest first."""
+    cur = conn.execute(
+        "SELECT * FROM tasks WHERE owner = ? AND status = ? ORDER BY id DESC",
+        (owner, status))
+    return [dict(r) for r in cur.fetchall()]
+
+
 def create_task(conn: sqlite3.Connection, owner: str, title: str) -> int:
     """Insert a task and return its id."""
     cur = conn.execute(
