@@ -29,6 +29,15 @@ class Api:
                   count=len(tasks))
         return {"status": 200, "body": tasks, "request_id": request_id}
 
+    def search_tasks(self, headers: dict, query: dict) -> dict:
+        """GET /tasks/search — search the caller's tasks by title."""
+        request_id = new_request_id()
+        owner = auth.verify_token(headers.get("authorization"))
+        term = str(query.get("q", ""))
+        rows = db.search_tasks(self._conn, owner, term, query.get("status"))
+        log_event("tasks.search", request_id, owner=owner, count=len(rows))
+        return {"status": 200, "body": rows, "request_id": request_id}
+
     def create_task(self, headers: dict, body: dict) -> dict:
         """POST /tasks — create a task for the caller."""
         request_id = new_request_id()
