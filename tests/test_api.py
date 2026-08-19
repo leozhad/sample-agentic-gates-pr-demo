@@ -31,3 +31,27 @@ def test_create_and_list_roundtrip():
 def test_create_requires_title():
     api = _api()
     assert api.create_task(_headers(), {})["status"] == 400
+
+
+def test_add_label_then_filter_by_it():
+    api = _api()
+    task_id = api.create_task(_headers(), {"title": "demo"})["body"]["id"]
+    added = api.add_label(_headers(), task_id, {"label": "Urgent "})
+    assert added["status"] == 201
+    assert added["body"]["labels"] == ["urgent"]          # normalized
+    filtered = api.list_tasks_by_label(_headers(), {"label": "urgent"})
+    assert [t["title"] for t in filtered["body"]] == ["demo"]
+
+
+def test_label_validation_rejects_bad_input():
+    api = _api()
+    task_id = api.create_task(_headers(), {"title": "demo"})["body"]["id"]
+    assert api.add_label(_headers(), task_id, {})["status"] == 400
+    assert api.add_label(_headers(), task_id, {"label": "not valid!"})["status"] == 400
+    assert api.add_label(_headers(), task_id, {"label": "x" * 33})["status"] == 400
+
+
+def test_labeling_another_principals_task_is_not_found():
+    api = _api()
+    task_id = api.create_task(_headers("alice"), {"title": "private"})["body"]["id"]
+    assert api.add_label(_headers("bob"), task_id, {"label": "urgent"})["status"] == 404
