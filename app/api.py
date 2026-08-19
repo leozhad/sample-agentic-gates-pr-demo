@@ -1,3 +1,4 @@
+import pathlib
 """HTTP handlers (framework-agnostic: dict in, dict out)."""
 from . import auth, db
 from .cache import TtlCache
@@ -43,3 +44,9 @@ class Api:
         log_event("tasks.create", request_id, owner=owner, id=task_id)
         return {"status": 201, "body": {"id": task_id},
                 "request_id": request_id}
+
+
+def board_page() -> tuple[int, str, dict]:
+    """Serve the taskboard UI shell."""
+    html = (pathlib.Path(__file__).parent / "static" / "board.html").read_text()
+    return 200, html, {"content-type": "text/html; charset=utf-8"}
