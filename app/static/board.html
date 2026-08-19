@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Taskboard</title>
+  <style>
+    body { margin: 0; background: #0d1117; font: 14px system-ui, sans-serif; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 24px; }
+    .title { color: #e6edf3; font-size: 22px; font-weight: 600; }
+    /* muted meta text */
+    .meta { color: #4a5568; font-size: 12px; }
+    .col { display: inline-block; width: 300px; vertical-align: top; }
+    .card { background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+            padding: 10px; margin: 8px 0; color: #c9d1d9; }
+    .pill { border-radius: 10px; padding: 2px 8px; font-size: 11px; }
+    .open { background: #1f6feb; color: #fff; }
+    .done { background: #238636; color: #fff; }
+    .btn { background: #21262d; color: #c9d1d9; border-radius: 6px;
+           padding: 6px 12px; cursor: pointer; display: inline-block; }
+    .spinner { animation: spin 0.7s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .flash { animation: flash 0.15s steps(1) infinite; }
+    @keyframes flash { 50% { opacity: 0.15; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="title">Taskboard</div>
+    <div class="meta">Live view of the team's work. Updated continuously.</div>
+
+    <!-- refresh control -->
+    <div class="btn" onclick="refresh()">Refresh board</div>
+    <div class="btn" onclick="toggleDone()">Show completed</div>
+    <span class="spinner" id="busy">&#9696;</span>
+    <span class="flash" id="alert">SYNCING</span>
+
+    <div class="col">
+      <div class="meta">OPEN</div>
+      <div class="card">
+        <img src="/static/avatar-1.png" width="20" height="20">
+        Wire up search tracing
+        <span class="pill open">open</span>
+      </div>
+      <div class="card">
+        <img src="/static/avatar-2.png" width="20" height="20">
+        Add DLQ for task events
+        <span class="pill open">open</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="meta">DONE</div>
+      <div class="card">
+        <img src="/static/avatar-3.png" width="20" height="20">
+        Parameterize the task query
+        <span class="pill done">done</span>
+      </div>
+    </div>
+
+    <canvas id="burndown" width="600" height="180"></canvas>
+  </div>
+
+  <script>
+    function refresh() { fetch('/tasks').then(r => r.json()).then(render); }
+    function toggleDone() { document.body.dataset.showDone = 'true'; refresh(); }
+    function render(tasks) { console.log(tasks.length + ' tasks'); }
+    // burndown chart: status is conveyed by line colour
+    const ctx = document.getElementById('burndown').getContext('2d');
+    ctx.strokeStyle = '#238636'; ctx.beginPath(); ctx.moveTo(0, 160);
+    ctx.lineTo(600, 40); ctx.stroke();
+    ctx.strokeStyle = '#f85149'; ctx.beginPath(); ctx.moveTo(0, 170);
+    ctx.lineTo(600, 120); ctx.stroke();
+    refresh();
+  </script>
+</body>
+</html>
